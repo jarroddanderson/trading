@@ -1047,41 +1047,72 @@ function openPasteImporter() {
 
 function parsePastedBlotter() {
   const raw = document.getElementById('paste-blotter-input')?.value?.trim();
-  if (!raw) { toast('⚠ Nothing pasted yet'); return; }
+  if (!raw) { toast('\u26a0 Nothing pasted yet'); return; }
 
   const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
   const trades = [];
 
   const INSTRUMENTS = ['NQ','MNQ','ES','MES','RTY','MRTY','YM','MYM','CL','MCL','GC','MGC','SI','ZN','ZB'];
-  const instrRe = new RegExp('\\b(' + INSTRUMENTS.join('|') + ')\\b', 'i');
+  // Support /MNQ style (TopstepX uses leading slash)
+  const instrRe = new RegExp('\\/?(\\b(?:' + INSTRUMENTS.join('|') + ')\\b)', 'i');
 
   for (const line of lines) {
-    if (/instrument|symbol|contract|entry price|direction|side|time|date/i.test(line) && !/\d{2}:\d{2}/.test(line)) continue;
+    // Skip pure header lines
+    if (/^(journal|id|symbol|instrument|entry price|direction|side)\b/i.test(line)) continue;
 
     const instrMatch = line.match(instrRe);
     if (!instrMatch) continue;
 
     const instrument = instrMatch[1].toUpperCase();
-    const dirMatch = line.match(/\b(buy|long|sell|short)\b/i);
-    const direction = dirMatch ? (/buy|long/i.test(dirMatch[1]) ? 'long' : 'short') : null;
 
-    const nums = [...line.matchAll(/-?\d{1,6}(?:\.\d{1,4})?/g)].map(m => parseFloat(m[0]));
-    const timeMatch = line.match(/\b(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)\b/i);
-    const time = timeMatch ? timeMatch[1] : '';
+    // Direction - TopstepX shows Long/Short at end
+    const dirMatch = line.match(/\b(long|short|buy|sell)\b/i);
+    const direction = dirMatch ? (/long|buy/i.test(dirMatch[1]) ? 'long' : 'short') : null;
 
-    const prices = nums.filter(n => n > 100 && n < 100000);
-    const entry  = prices[0] || null;
-    const exit   = prices[1] || null;
-    const pnl    = nums.find(n => Math.abs(n) < 5000 && !prices.includes(n)) ?? null;
-    const contracts = nums.find(n => n >= 1 && n <= 50 && Number.isInteger(n) && n !== entry && n !== exit) || 1;
+    // Time - grab HH:MM or HH:MM:SS pattern
+    const timeMatch = line.match(/(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]M)?)/i);
+    const time = timeMatch ? timeMatch[1].trim() : '';
 
-    trades.push({ instrument, direction, contracts, entry, exit, pnl: pnl ?? null, time, notes: '' });
+    // Strip large unix-style timestamps (TopstepX timestamps are ~1,780,000,000)
+    // These appear as "May 29 2026 @ 7:43 pm" or as raw integers in copied data
+    const stripped = line
+      .replace(/\bMay\b.*?\b(am|pm)\b/gi, ' ')   // remove "May 29 2026 @ 7:43:11 pm" style
+      .replace(/\b1[,\s]?[78]\d{2}[,\s]?\d{3}[,\s]?\d{3}\b/g, ' ') // remove ~1.78B timestamps
+      .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ') // remove HH:MM:SS
+      .replace(/\b\d{2}:\d{2}\b/g, ' ')
+      .replace(/\b00:\d{2}:\d{2}\b/g, ' ');        // remove duration 00:03:45
+
+    // Extract all remaining numbers
+    const nums = [...stripped.matchAll(/-?\d{1,6}(?:\.\d{1,2})?/g)]
+      .map(m => parseFloat(m[0]))
+      .filter(n => !isNaN(n));
+
+    // Contracts: small positive integer 1-100, appears early in row (after ID/symbol)
+    const contracts = nums.find(n => Number.isInteger(n) && n >= 1 && n <= 100) || 1;
+
+    // Entry/Exit prices: futures prices in range 1000-100000
+    const prices = nums.filter(n => n > 1000 && n < 100000);
+    const entry = prices[0] || null;
+    const exit  = prices[1] || null;
+
+    // P&L: not a price, not contracts, abs < 5000
+    // TopstepX P&L is negative for losses - preserve the sign
+    const usedSet = new Set([contracts, ...(prices)]);
+    let pnl = null;
+    for (const n of nums) {
+      if (!usedSet.has(n) && Math.abs(n) < 5000 && n !== 0) {
+        pnl = n;
+        break;
+      }
+    }
+
+    trades.push({ instrument, direction, contracts, entry, exit, pnl, time, notes: '' });
   }
 
   document.getElementById('paste-importer-overlay').remove();
 
   if (!trades.length) {
-    toast('⚠ No trades found — make sure you copied rows with instrument names (NQ, ES, etc.)');
+    toast('\u26a0 No trades found \u2014 make sure rows contain instrument names like /MNQ, NQ, ES, etc.');
     return;
   }
   openImportReview(trades);
