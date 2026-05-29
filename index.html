@@ -251,6 +251,7 @@ textarea.notes-edit:focus{border-color:var(--text)}
 }
 @media(max-width:700px){.sidebar{display:none}.main{padding:20px 16px}}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
 </head>
 <body>
 <div class="layout">
@@ -289,10 +290,10 @@ textarea.notes-edit:focus{border-color:var(--text)}
 
     <div class="upload-blotter" id="blotter-drop" ondragover="dragOn(event)" ondragleave="dragOff(event)" ondrop="dropBlotter(event)">
       <input type="file" accept="image/*" id="blotter-file" onchange="handleBlotter(event)">
-      <div class="ai-pill">✦ AI Bulk Extractor</div>
+      <div class="ai-pill">📷 Blotter Extractor</div>
       <div class="upload-icon-big">📊</div>
       <div class="upload-title">Upload today's blotter screenshot</div>
-      <div class="upload-desc">Drop your TopstepX trade history table screenshot here.<br>AI reads every row and extracts all trades at once.</div>
+      <div class="upload-desc">Drop your TopstepX trade history table screenshot here.<br>OCR reads every row and extracts all trades automatically.</div>
     </div>
 
     <div class="processing-bar" id="proc-bar"><div class="processing-fill" id="proc-fill"></div></div>
@@ -1007,97 +1008,91 @@ function showProc(msg, pct) {
 }
 function hideProc() { document.getElementById('proc-bar').style.display='none'; document.getElementById('proc-msg').style.display='none'; }
 
-function extractBlotterAI(imgData) {
-  hideProc();
-  openPasteImporter();
+async function extractBlotterAI(imgDataUrl) {
+  showProc('Loading OCR engine…', 15);
+  try {
+    // Tesseract.js v5 API
+    const worker = await Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          showProc('Reading screenshot… ' + Math.round(m.progress * 100) + '%', 20 + Math.round(m.progress * 60));
+        }
+      }
+    });
+
+    showProc('Recognising text…', 25);
+    const { data: { text } } = await worker.recognize(imgDataUrl);
+    await worker.terminate();
+
+    showProc('Parsing trades…', 85);
+
+    const trades = parseTopstepXText(text);
+
+    hideProc();
+
+    if (!trades.length) {
+      toast('⚠ No trades found — make sure the screenshot shows the trade table clearly');
+      return;
+    }
+    openImportReview(trades);
+  } catch(err) {
+    hideProc();
+    console.error('OCR error:', err);
+    toast('⚠ OCR failed: ' + (err.message || 'unknown error'));
+  }
 }
 
-function openPasteImporter() {
-  const existing = document.getElementById('paste-importer-overlay');
-  if (existing) { existing.classList.add('open'); return; }
-
-  const overlay = document.createElement('div');
-  overlay.id = 'paste-importer-overlay';
-  overlay.style.cssText = 'display:flex;position:fixed;inset:0;background:rgba(10,8,6,.6);z-index:700;align-items:center;justify-content:center;padding:20px';
-  overlay.innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--r);width:660px;max-width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.2);padding:28px 30px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px">
-        <div style="font-family:'DM Serif Display',serif;font-size:20px">Paste Blotter Text</div>
-        <button onclick="document.getElementById('paste-importer-overlay').remove()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted)">×</button>
-      </div>
-      <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px;line-height:1.6">
-        In TopstepX, open your trade history, <strong>select all the rows</strong> and copy (Ctrl+C / Cmd+C), then paste below.<br>
-        Works with tab-separated or space-separated table text.
-      </div>
-      <textarea id="paste-blotter-input" style="width:100%;height:180px;padding:10px 12px;border:1px solid var(--border2);border-radius:var(--r-sm);font-family:'DM Mono',monospace;font-size:12px;resize:vertical;color:var(--text);background:var(--surface);outline:none;line-height:1.5" placeholder="Paste your TopstepX trade history table here…"></textarea>
-      <div id="paste-parse-preview" style="margin-top:12px;font-size:12px;color:var(--muted)"></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button class="btn btn-ghost" onclick="document.getElementById('paste-importer-overlay').remove()">Cancel</button>
-        <button class="btn btn-primary" onclick="parsePastedBlotter()">Parse Trades →</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  document.getElementById('paste-blotter-input').addEventListener('input', function() {
-    const preview = document.getElementById('paste-parse-preview');
-    const lines = this.value.trim().split('\n').filter(l => l.trim());
-    preview.textContent = lines.length ? `${lines.length} line(s) detected — click Parse to continue.` : '';
-  });
-}
-
-function parsePastedBlotter() {
-  const raw = document.getElementById('paste-blotter-input')?.value?.trim();
-  if (!raw) { toast('\u26a0 Nothing pasted yet'); return; }
-
-  const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+function parseTopstepXText(rawText) {
   const trades = [];
-
   const INSTRUMENTS = ['NQ','MNQ','ES','MES','RTY','MRTY','YM','MYM','CL','MCL','GC','MGC','SI','ZN','ZB'];
-  // Support /MNQ style (TopstepX uses leading slash)
-  const instrRe = new RegExp('\\/?(\\b(?:' + INSTRUMENTS.join('|') + ')\\b)', 'i');
+  const instrRe = new RegExp('\\/?(' + INSTRUMENTS.join('|') + ')\\b', 'i');
+
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
 
   for (const line of lines) {
-    // Skip pure header lines
-    if (/^(journal|id|symbol|instrument|entry price|direction|side)\b/i.test(line)) continue;
-
+    // Must contain an instrument name
     const instrMatch = line.match(instrRe);
     if (!instrMatch) continue;
 
+    // Skip header rows
+    if (/\b(symbol|instrument|entry price|direction|side|journal)\b/i.test(line) &&
+        !instrMatch) continue;
+
     const instrument = instrMatch[1].toUpperCase();
 
-    // Direction - TopstepX shows Long/Short at end
+    // Direction
     const dirMatch = line.match(/\b(long|short|buy|sell)\b/i);
     const direction = dirMatch ? (/long|buy/i.test(dirMatch[1]) ? 'long' : 'short') : null;
 
-    // Time - grab HH:MM or HH:MM:SS pattern
-    const timeMatch = line.match(/(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]M)?)/i);
+    // Time - prefer a recognisable clock time
+    const timeMatch = line.match(/\b(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]M)?)\b/i);
     const time = timeMatch ? timeMatch[1].trim() : '';
 
-    // Strip large unix-style timestamps (TopstepX timestamps are ~1,780,000,000)
-    // These appear as "May 29 2026 @ 7:43 pm" or as raw integers in copied data
-    const stripped = line
-      .replace(/\bMay\b.*?\b(am|pm)\b/gi, ' ')   // remove "May 29 2026 @ 7:43:11 pm" style
-      .replace(/\b1[,\s]?[78]\d{2}[,\s]?\d{3}[,\s]?\d{3}\b/g, ' ') // remove ~1.78B timestamps
-      .replace(/\b\d{2}:\d{2}(?::\d{2})?\b/g, ' ') // remove HH:MM:SS
-      .replace(/\b\d{2}:\d{2}\b/g, ' ')
-      .replace(/\b00:\d{2}:\d{2}\b/g, ' ');        // remove duration 00:03:45
+    // Strip noisy parts before number extraction:
+    // - unix-style timestamps (~1.78 billion)
+    // - date strings like "May 29 2026"
+    // - duration strings like 00:03:45
+    let stripped = line
+      .replace(/\bMay\b[^0-9]*?\d{4}[^0-9]*?@[^0-9]*?\d{1,2}:\d{2}[^a-z]*/gi, ' ')
+      .replace(/\b1[,\s]?[78]\d{2}[,\s]?\d{3}[,\s]?\d{3}\b/g, ' ')
+      .replace(/\b00:\d{2}:\d{2}\b/g, ' ')
+      .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]M)?\b/gi, ' ');
 
-    // Extract all remaining numbers
-    const nums = [...stripped.matchAll(/-?\d{1,6}(?:\.\d{1,2})?/g)]
-      .map(m => parseFloat(m[0]))
+    // Extract all numbers (including negative)
+    const nums = [...stripped.matchAll(/-?\d{1,6}(?:[.,]\d{1,2})?/g)]
+      .map(m => parseFloat(m[0].replace(',', '')))
       .filter(n => !isNaN(n));
 
-    // Contracts: small positive integer 1-100, appears early in row (after ID/symbol)
+    // Contracts: small positive integer 1-100
     const contracts = nums.find(n => Number.isInteger(n) && n >= 1 && n <= 100) || 1;
 
-    // Entry/Exit prices: futures prices in range 1000-100000
+    // Prices: futures price range 1000-100000
     const prices = nums.filter(n => n > 1000 && n < 100000);
     const entry = prices[0] || null;
     const exit  = prices[1] || null;
 
-    // P&L: not a price, not contracts, abs < 5000
-    // TopstepX P&L is negative for losses - preserve the sign
-    const usedSet = new Set([contracts, ...(prices)]);
+    // P&L: not a price, not contracts, abs < 5000, can be negative
+    const usedSet = new Set([contracts, ...prices]);
     let pnl = null;
     for (const n of nums) {
       if (!usedSet.has(n) && Math.abs(n) < 5000 && n !== 0) {
@@ -1106,16 +1101,13 @@ function parsePastedBlotter() {
       }
     }
 
+    // Need at least entry price to be a valid trade row
+    if (!entry) continue;
+
     trades.push({ instrument, direction, contracts, entry, exit, pnl, time, notes: '' });
   }
 
-  document.getElementById('paste-importer-overlay').remove();
-
-  if (!trades.length) {
-    toast('\u26a0 No trades found \u2014 make sure rows contain instrument names like /MNQ, NQ, ES, etc.');
-    return;
-  }
-  openImportReview(trades);
+  return trades;
 }
 
 function openImportReview(trades) {
