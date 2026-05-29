@@ -1011,11 +1011,28 @@ function countParsedTrades(raw) {
 }
 
 function parseAndImportBlotter() {
-  const raw = document.getElementById('blotter-paste-input')?.value?.trim() || '';
-  if (!raw) { toast('⚠ Nothing pasted yet'); return; }
+  const raw = document.getElementById('blotter-paste-input')?.value || '';
+  if (!raw.trim()) { toast('⚠ Nothing pasted yet'); return; }
+
+  // Debug: show first 3 lines and character codes
+  const debugLines = raw.split('
+').slice(0, 3);
+  console.log('=== PASTE DEBUG ===');
+  console.log('Total chars:', raw.length);
+  debugLines.forEach((l, i) => {
+    const codes = [...l.slice(0,30)].map(c => c.charCodeAt(0));
+    console.log('Line', i, JSON.stringify(l.slice(0,60)), '| codes:', codes.join(','));
+  });
+
   const trades = parseTopstepXPaste(raw);
+  console.log('Parsed trades:', trades.length);
+
   if (!trades.length) {
-    toast('⚠ No trades found — copy the rows directly from the TopstepX trade table');
+    // Show helpful debug toast
+    const firstLine = raw.trim().split('
+')[0];
+    const cols = firstLine.split(/	| {2,}/).filter(s=>s.trim());
+    toast('⚠ No trades found — check console (F12) for details. First line had ' + cols.length + ' cols');
     return;
   }
   document.getElementById('blotter-paste-input').value = '';
