@@ -1766,126 +1766,194 @@ function saveGameplan() {
   toast('Game plan saved');
 }
 
-async function analyzeGameplan(mode) {
+function analyzeGameplan(mode) {
   const gp = getGpFormData();
-  const fbWrap = document.getElementById('gp-feedback-wrap');
+  const fbWrap    = document.getElementById('gp-feedback-wrap');
   const fbContent = document.getElementById('gp-feedback-content');
   const scoreBadge = document.getElementById('gp-score-badge');
 
   fbWrap.style.display = 'block';
-  fbContent.innerHTML = '<div style="color:#8B949E;font-size:13px">Analyzing your plan against ICT concepts…</div>';
-  scoreBadge.textContent = '';
-  scoreBadge.style.background = '';
   fbWrap.scrollIntoView({behavior:'smooth'});
 
-  // Compute R:R
-  let rrText = '';
+  // ── Compute R:R ─────────────────────────────────────
+  let rr = null, rrText = '';
   if (gp.entry && gp.stop && gp.tp1) {
     const risk   = Math.abs(gp.entry - gp.stop);
     const reward = Math.abs(gp.tp1 - gp.entry);
-    rrText = risk > 0 ? 'R:R = 1:' + (reward/risk).toFixed(2) : '';
+    if (risk > 0) { rr = reward / risk; rrText = '1:' + rr.toFixed(2); }
   }
 
-  const userMsg = mode === 'pre'
-    ? `Analyze my pre-trade game plan and tell me exactly what's right, what's wrong, and what's missing according to ICT methodology.
+  // ── ICT scoring rubric ───────────────────────────────
+  // Each check: { label, pass, tip }
+  const checks = [];
 
-TRADE PLAN:
-- Date: ${gp.date}
-- Instrument: ${gp.instrument}
-- Session: ${gp.session || 'not specified'}
-- HTF Bias: ${gp.htfBias || 'not specified'}
-- Draw on Liquidity target: ${gp.dol || 'not specified'}
-- Setup/Model: ${gp.setup || 'not specified'}
-- PD Array for entry: ${gp.pdArray || 'not specified'}
-- IPDA context: ${gp.ipda || 'not specified'}
-- Entry: ${gp.entry || 'not specified'}
-- Stop Loss: ${gp.stop || 'not specified'}
-- Target 1: ${gp.tp1 || 'not specified'}
-- Target 2: ${gp.tp2 || 'none'}
-- ${rrText}
-- Confluences checked: ${gp.confluences.length ? gp.confluences.join(', ') : 'none'}
-- My narrative: ${gp.notes || 'none provided'}
+  const has = v => v && v !== '' && v !== 'not specified';
 
-Give me:
-1. SCORE (X/10) with one sentence why
-2. WHAT'S RIGHT — specific confluences that are solid ICT
-3. WHAT'S MISSING or WRONG — exact ICT concepts not accounted for, common mistakes, red flags
-4. STOP/TARGET CRITIQUE — is placement logical by ICT rules? Where should stop actually be?
-5. ONE THING TO WATCH — the single most important thing before entering
+  checks.push({
+    label: 'Session / Kill Zone specified',
+    pass: has(gp.session),
+    tip: 'ICT methodology requires you trade only within defined kill zones (London, NY AM, Silver Bullet). No session = no edge.'
+  });
+  checks.push({
+    label: 'HTF Bias defined',
+    pass: has(gp.htfBias),
+    tip: 'Higher timeframe bias is the foundation of every ICT trade. Daily/weekly must be read before zooming in.'
+  });
+  checks.push({
+    label: 'Draw on Liquidity identified',
+    pass: has(gp.dol),
+    tip: 'You must always know WHERE price is going (BSL or SSL). Trading without a DOL target is guessing.'
+  });
+  checks.push({
+    label: 'Setup / Entry model chosen',
+    pass: has(gp.setup),
+    tip: 'Specify your model (Silver Bullet, Judas Swing, OTE, etc.) so your execution has a defined rule set.'
+  });
+  checks.push({
+    label: 'PD Array for entry defined',
+    pass: has(gp.pdArray),
+    tip: 'Entry must be at a valid PD array (OB, FVG, Breaker, BPR, etc.) — random price entries have no ICT basis.'
+  });
+  checks.push({
+    label: 'IPDA context provided',
+    pass: has(gp.ipda),
+    tip: 'IPDA (20/40/60 day lookback) tells you what buy/sell program is in play. Without it you\'re missing the macro context.'
+  });
+  checks.push({
+    label: 'Entry price set',
+    pass: !!gp.entry,
+    tip: 'A specific entry price keeps you disciplined — waiting for your level instead of chasing.'
+  });
+  checks.push({
+    label: 'Stop loss placed',
+    pass: !!gp.stop,
+    tip: 'No stop = undefined risk. Stop should sit beyond the invalidation point of your PD array.'
+  });
+  checks.push({
+    label: 'Target 1 defined',
+    pass: !!gp.tp1,
+    tip: 'Target should be the next liquidity pool (BSL/SSL) or at minimum the opposing PD array.'
+  });
+  checks.push({
+    label: 'R:R ≥ 1:2',
+    pass: rr !== null && rr >= 2,
+    tip: rr !== null ? `Your R:R is ${rrText}. ICT methodology requires minimum 1:2 to justify the risk.` : 'Enter your entry, stop, and target to calculate R:R.'
+  });
+  checks.push({
+    label: 'At least 3 confluences checked',
+    pass: (gp.confluences || []).length >= 3,
+    tip: `You have ${(gp.confluences||[]).length} confluence(s) checked. The more ICT factors align, the higher probability the setup.`
+  });
+  checks.push({
+    label: 'Trade narrative written',
+    pass: has(gp.notes) && gp.notes.length >= 30,
+    tip: 'Writing out your full read forces you to articulate the logic. If you can\'t describe it, you don\'t fully understand it.'
+  });
 
-Be direct, specific, use ICT terminology. Don't be generic.`
-    : `Post-trade review. Compare what I planned versus ICT principles and tell me where I went wrong or right.
+  const passed  = checks.filter(c => c.pass).length;
+  const total   = checks.length;
+  const score   = Math.round((passed / total) * 10);
+  const missing = checks.filter(c => !c.pass);
 
-ORIGINAL PLAN:
-- Instrument: ${gp.instrument}, Session: ${gp.session}
-- HTF Bias: ${gp.htfBias}, DOL: ${gp.dol}
-- Setup: ${gp.setup}, PD Array: ${gp.pdArray}
-- Entry: ${gp.entry}, Stop: ${gp.stop}, Target: ${gp.tp1}
-- ${rrText}
-- My narrative: ${gp.notes}
+  // ── Score badge ──────────────────────────────────────
+  scoreBadge.textContent = score + '/10';
+  scoreBadge.style.cssText = 'background:' + (score>=8?'#166534':score>=6?'#92400E':'#991B1B') + ';color:#fff;border-radius:20px;padding:3px 12px;font-size:13px;font-weight:700';
 
-Give me a post-trade debrief:
-1. EXECUTION GRADE (A/B/C/D/F)
-2. DID THE SETUP PLAY OUT? — did ICT concepts deliver as expected?
-3. MISTAKES MADE — what ICT rules were broken in planning or execution?
-4. LESSON — one specific ICT concept to study based on this trade
-5. WHAT TO DO DIFFERENTLY next time this setup appears`;
+  // ── Build output HTML ────────────────────────────────
+  let html = '';
+  const sec = (label, body) =>
+    `<div class="gp-feedback-section"><div class="gp-feedback-label">${label}</div><div style="color:#CDD9E5;line-height:1.7">${body}</div></div>`;
 
-  try {
-    const res = await fetch('/api/claude', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1500,
-        system: ICT_SYSTEM_PROMPT,
-        messages: [{role:'user', content: userMsg}]
-      })
-    });
+  if (mode === 'pre') {
+    // Score verdict
+    const verdicts = [
+      [9,'High-probability setup — all ICT criteria satisfied. Execute with confidence.'],
+      [7,'Solid plan with minor gaps. Address missing items before entering.'],
+      [5,'Plan needs more work. Several ICT requirements are unmet — don\'t enter yet.'],
+      [0,'Low-quality setup. Too many critical ICT elements missing. Do not trade this.']
+    ];
+    const verdict = verdicts.find(([min]) => score >= min)[1];
+    html += sec('SCORE', `<strong>${score}/10</strong> — ${verdict}`);
 
-    if (!res.ok) throw new Error('API ' + res.status);
-    const data = await res.json();
-    const text = data.content?.[0]?.text || '';
-
-    // Parse score
-    const scoreMatch = text.match(/(\d+)\s*\/\s*10/);
-    const score = scoreMatch ? parseInt(scoreMatch[1]) : null;
-    if (score !== null) {
-      scoreBadge.textContent = score + '/10';
-      scoreBadge.style.background = score >= 8 ? '#166534' : score >= 6 ? '#92400E' : '#991B1B';
-      scoreBadge.style.color = '#fff';
-      scoreBadge.style.borderRadius = '20px';
-      scoreBadge.style.padding = '3px 12px';
-      scoreBadge.style.fontSize = '13px';
-      scoreBadge.style.fontWeight = '700';
+    // What's right
+    const good = checks.filter(c => c.pass);
+    if (good.length) {
+      html += sec('WHAT\'S RIGHT', good.map(c => `· ${c.label}`).join('<br>'));
     }
 
-    // Format the response into sections
-    const formatted = text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/^(\d+\.\s*[A-Z][A-Z\s\/&]+[:\-]+)/gm, '<div class="gp-feedback-label" style="margin-top:14px">$1</div>')
-      .replace(/^[-•]\s+(.+)$/gm, '<div style="padding-left:12px;margin:3px 0;color:#CDD9E5">· $1</div>')
-      .replace(/\n\n/g, '<br>');
-
-    fbContent.innerHTML = '<div style="line-height:1.8">' + formatted + '</div>';
-
-    // Show post-trade button if this was a pre-trade analysis
-    if (mode === 'pre') {
-      document.getElementById('gp-post-btn').style.display = 'inline-flex';
+    // What's missing
+    if (missing.length) {
+      html += sec('WHAT\'S MISSING / WRONG',
+        missing.map(c => `<div style="margin-bottom:6px"><strong>${c.label}</strong><br><span style="font-size:12px;color:#8B949E">${c.tip}</span></div>`).join(''));
+    } else {
+      html += sec('WHAT\'S MISSING / WRONG', 'Nothing critical missing. Checklist complete.');
     }
 
-    // Save feedback to the plan
-    saveGameplan();
-    const savedGp = S.gameplans?.find(g => g.id === activeGpId);
-    if (savedGp) {
-      savedGp.feedback = text;
-      savedGp.score = score;
-      savedGp.feedbackMode = mode;
-      save();
+    // Stop/Target critique
+    if (rr !== null) {
+      const rrOk = rr >= 2;
+      const stopDir = gp.direction === 'long' ? 'below your entry OB/FVG' : 'above your entry OB/FVG';
+      html += sec('STOP / TARGET CRITIQUE',
+        `R:R is <strong>${rrText}</strong> — ${rrOk ? 'meets the 1:2 minimum.' : 'below the 1:2 ICT minimum. Widen your target or tighten your stop to a more precise structural level.'} Stop should sit ${stopDir}, not at an arbitrary dollar amount.`);
+    } else {
+      html += sec('STOP / TARGET CRITIQUE', 'Enter your entry, stop, and target prices to get a R:R critique.');
     }
 
-  } catch(e) {
-    fbContent.innerHTML = '<div style="color:var(--red)">' + e.message + '</div>';
+    // One thing to watch
+    if (missing.length > 0) {
+      const top = missing[0];
+      html += sec('ONE THING TO WATCH', `Before entering: <strong>${top.label}</strong>. ${top.tip}`);
+    } else {
+      html += sec('ONE THING TO WATCH', 'All boxes checked. Execute only if price reaches your defined entry level — don\'t chase.');
+    }
+
+    document.getElementById('gp-post-btn').style.display = 'inline-flex';
+
+  } else {
+    // Post-trade review
+    const grade = score >= 8 ? 'A' : score >= 6 ? 'B' : score >= 5 ? 'C' : score >= 4 ? 'D' : 'F';
+    html += sec('EXECUTION GRADE', `<strong>${grade}</strong> (${score}/10) — Plan completeness at ${Math.round(passed/total*100)}%.`);
+
+    html += sec('DID THE SETUP PLAY OUT?',
+      has(gp.notes)
+        ? `Based on your narrative: "${gp.notes.slice(0,120)}${gp.notes.length>120?'…':''}". Review your chart against the original levels to assess delivery.`
+        : 'No narrative was written. Without documenting the read, post-trade review is incomplete.');
+
+    if (missing.length) {
+      html += sec('MISTAKES MADE (PLANNING)',
+        missing.map(c => `· ${c.label}: ${c.tip}`).join('<br><br>'));
+    } else {
+      html += sec('MISTAKES MADE (PLANNING)', 'Plan was fully built out — any mistakes were in execution, not planning.');
+    }
+
+    // Lesson — pick the most impactful missing item
+    const lessonMap = {
+      'R:R ≥ 1:2': 'Study the Optimal Trade Entry (OTE) model — getting in at 61.8–79% retracement maximises R:R.',
+      'Draw on Liquidity identified': 'Study IPDA and daily/weekly DOL identification. Where price is going determines everything.',
+      'At least 3 confluences checked': 'Review confluence stacking — the more PD arrays, time, and structure align, the higher probability.',
+      'HTF Bias defined': 'Practise top-down analysis: monthly → weekly → daily before any intraday work.',
+    };
+    const lessonKey = missing.find(c => lessonMap[c.label]);
+    html += sec('LESSON', lessonKey
+      ? lessonMap[lessonKey.label]
+      : 'Your planning process is solid. Focus on precise entry timing within your kill zone.');
+
+    html += sec('WHAT TO DO DIFFERENTLY',
+      missing.length
+        ? `Complete all ${missing.length} missing element(s) before the next trade. Especially: <strong>${missing[0].label}</strong>.`
+        : 'Replicate this planning process on every trade.');
+  }
+
+  fbContent.innerHTML = '<div style="line-height:1.8">' + html + '</div>';
+
+  // Save to plan
+  saveGameplan();
+  const savedGp = S.gameplans?.find(g => g.id === activeGpId);
+  if (savedGp) {
+    savedGp.feedback = fbContent.innerHTML;
+    savedGp.score = score;
+    savedGp.feedbackMode = mode;
+    save();
   }
 }
 
@@ -2033,92 +2101,121 @@ function setRule(tradeId, ruleId, val) {
   renderRulesChecklist(tradeId);
 }
 
-async function analyzeRules() {
+function analyzeRules() {
   const t = S.trades.find(x => x.id === detailTradeId);
   if (!t) return;
   const rules = getRules();
   const checked = t.rulesChecked || {};
 
-  const followed = rules.filter(r => checked[r.id] === true).map(r => r.text);
-  const broke = rules.filter(r => checked[r.id] === false).map(r => r.text);
-  const skipped = rules.filter(r => checked[r.id] == null).map(r => r.text);
+  const followed = rules.filter(r => checked[r.id] === true);
+  const broke    = rules.filter(r => checked[r.id] === false);
+  const skipped  = rules.filter(r => checked[r.id] == null);
 
-  const fb = document.getElementById('d-rules-feedback');
-  const fbText = document.getElementById('d-rules-feedback-text');
-  const grade = document.getElementById('d-rules-grade');
+  const fb       = document.getElementById('d-rules-feedback');
+  const fbText   = document.getElementById('d-rules-feedback-text');
+  const grade    = document.getElementById('d-rules-grade');
   const gradeLabel = document.getElementById('d-rules-grade-label');
 
   fb.style.display = 'block';
-  grade.textContent = '…';
-  gradeLabel.textContent = 'Analyzing…';
-  fbText.innerHTML = '<span style="color:var(--muted)">Grading your execution…</span>';
 
-  const result = t.result || 'unknown';
-  const pnl = t.pnl ? `$${t.pnl.toFixed(2)}` : 'unknown';
+  const assessed = followed.length + broke.length;
+  const total    = rules.length;
 
-  const prompt = `You are an ICT trading coach reviewing a trader's rule compliance on a single trade.
+  // Score: base is % of assessed rules followed; penalise unassessed ones lightly
+  let score = 0;
+  if (assessed > 0) {
+    const followedPct = followed.length / assessed;
+    const assessedPct = assessed / total;
+    score = followedPct * assessedPct * 100 + (1 - assessedPct) * 40; // unassessed assumed 40% ok
+  }
 
-TRADE RESULT: ${result.toUpperCase()} · P&L: ${pnl} · Instrument: ${t.instrument} · ${t.direction === 'long' ? 'Long' : 'Short'}
+  // Letter grade
+  let letter, gradeVal;
+  if (assessed === 0)          { letter = '?'; gradeVal = '?'; }
+  else if (score >= 90)        { letter = 'A'; gradeVal = 'A'; }
+  else if (score >= 78)        { letter = 'B'; gradeVal = 'B'; }
+  else if (score >= 65)        { letter = 'C'; gradeVal = 'C'; }
+  else if (score >= 50)        { letter = 'D'; gradeVal = 'D'; }
+  else                         { letter = 'F'; gradeVal = 'F'; }
 
-RULES FOLLOWED (${followed.length}):
-${followed.length ? followed.map(r => '✓ ' + r).join('\n') : 'None marked'}
+  const gradeColors = { A:'#22C55E', B:'#86EFAC', C:'#FCD34D', D:'#FB923C', F:'#EF4444', '?':'#8B949E' };
+  const gradeLabels = { A:'Excellent execution', B:'Good — minor lapses', C:'Acceptable — needs work', D:'Poor execution', F:'Rules abandoned', '?':'Mark your rules to get a grade' };
 
-RULES BROKEN (${broke.length}):
-${broke.length ? broke.map(r => '✗ ' + r).join('\n') : 'None broken'}
+  grade.textContent  = gradeVal;
+  grade.style.color  = gradeColors[letter] || '#CDD9E5';
+  gradeLabel.textContent = gradeLabels[letter] || 'Graded';
 
-NOT ASSESSED (${skipped.length}):
-${skipped.length ? skipped.map(r => '? ' + r).join('\n') : 'All assessed'}
+  // ── Build feedback sections ──────────────────────────
+  let html = '';
 
-TRADER NOTES: ${t.notes || 'None'}
+  // GRADE section
+  const verdicts = {
+    A: 'Disciplined execution — you followed your process.',
+    B: 'Solid trade with a couple of minor lapses.',
+    C: 'Inconsistent — half the rules need attention.',
+    D: 'Too many rules broken; review your process.',
+    F: 'Rules were largely abandoned on this trade.',
+    '?': 'Mark each rule as followed or broken to see your grade.'
+  };
+  html += section('GRADE', `${gradeVal} — ${verdicts[letter]}`);
 
-Grade this trader's execution A/B/C/D/F.
-Then give:
-1. GRADE: letter grade + one sentence verdict
-2. BIGGEST MISTAKE: the single most costly rule broken (if any) — be specific and direct
-3. PATTERN WARNING: if you see a behavioral pattern forming (revenge trading, moving stops, oversizing) call it out
-4. ONE THING: the one rule change that would have most improved this trade's outcome
+  // BIGGEST MISTAKE
+  if (broke.length > 0) {
+    // Prioritise high-risk rules by id
+    const highRisk = ['r7','r8','r9','r3','r6'];
+    const worst = broke.find(r => highRisk.includes(r.id)) || broke[0];
+    const riskNotes = {
+      r7: 'Revenge trading is the fastest way to blow an account — one bad trade leads to a worse one.',
+      r8: 'Moving your stop against the trade invalidates your risk plan entirely.',
+      r9: 'Exceeding the daily max loss limit is a prop-firm violation.',
+      r3: 'Entering without a liquidity sweep means you likely bought into sell-side or sold into buy-side.',
+      r6: 'Sub 1:2 R:R means you need to win more than 67% just to break even.',
+    };
+    const note = riskNotes[worst.id] || 'This rule protects your edge — breaking it undermines the whole setup.';
+    html += section('BIGGEST MISTAKE', `"${worst.text}" — ${note}`);
+  } else if (assessed > 0) {
+    html += section('BIGGEST MISTAKE', 'No rules marked as broken. Clean execution.');
+  }
 
-Be direct. Use ICT terminology. 3-4 sentences max per section. Don't be generic.`;
+  // PATTERN WARNING — check cross-trade patterns
+  const recentTrades = (S.trades || []).slice(-10);
+  const recentBroken = recentTrades.map(tr => {
+    const c = tr.rulesChecked || {};
+    return Object.entries(c).filter(([,v]) => v === false).map(([k]) => k);
+  }).flat();
+  const countById = {};
+  recentBroken.forEach(id => countById[id] = (countById[id] || 0) + 1);
+  const repeatOffenders = Object.entries(countById).filter(([,c]) => c >= 2).sort((a,b) => b[1]-a[1]);
 
-  try {
-    const res = await fetch('/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 800,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-    if (!res.ok) throw new Error('API ' + res.status);
-    const data = await res.json();
-    const text = data.content?.[0]?.text || '';
+  if (repeatOffenders.length > 0) {
+    const [topId, topCount] = repeatOffenders[0];
+    const topRule = rules.find(r => r.id === topId);
+    html += section('PATTERN WARNING', `"${topRule ? topRule.text : topId}" has been broken ${topCount} times in your last 10 trades. This is a recurring issue, not a one-off — it needs to become a hard rule.`);
+  } else if (assessed >= 8) {
+    html += section('PATTERN WARNING', 'No repeat patterns detected across recent trades. Stay consistent.');
+  }
 
-    // Extract grade
-    const gradeMatch = text.match(/\bGRADE[:\s]+([A-F][+-]?)/i) || text.match(/^([A-F][+-]?)\b/m);
-    const gradeVal = gradeMatch ? gradeMatch[1].toUpperCase() : '?';
-    const gradeColors = { A: '#22C55E', B: '#86EFAC', C: '#FCD34D', D: '#FB923C', F: '#EF4444' };
-    const gradeLabels = { A: 'Excellent execution', B: 'Good — minor lapses', C: 'Acceptable — needs work', D: 'Poor execution', F: 'Rules abandoned' };
-    const letter = gradeVal[0];
+  // ONE THING
+  if (skipped.length > 0 && assessed < total) {
+    html += section('ONE THING', `You left ${skipped.length} rule(s) unassessed. Reviewing every rule after each trade is where growth happens — even on wins.`);
+  } else if (broke.length > 0) {
+    const focusRule = broke[broke.length - 1]; // last broken
+    html += section('ONE THING', `Focus on: "${focusRule.text}". Building this into a non-negotiable habit will compound your win rate over time.`);
+  } else if (gradeVal === 'A') {
+    html += section('ONE THING', 'Screenshot this trade and add it to your playbook — this is what disciplined execution looks like.');
+  }
 
-    grade.textContent = gradeVal;
-    grade.style.color = gradeColors[letter] || '#CDD9E5';
-    gradeLabel.textContent = gradeLabels[letter] || 'Graded';
+  fbText.innerHTML = html;
 
-    const formatted = text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/^(GRADE|BIGGEST MISTAKE|PATTERN WARNING|ONE THING)[:\s]*/gm, '<div style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#8B949E;margin-top:10px;margin-bottom:3px">$1</div>')
-      .replace(/\n\n/g, '<br>');
-    fbText.innerHTML = formatted;
+  // Save to trade
+  t.rulesFeedback  = html;
+  t.rulesGrade     = gradeVal;
+  t.rulesGradeLabel = gradeLabels[letter] || '';
+  save();
 
-    // Save to trade
-    t.rulesFeedback = formatted;
-    t.rulesGrade = gradeVal;
-    t.rulesGradeLabel = gradeLabels[letter] || '';
-    save();
-
-  } catch(e) {
-    fbText.innerHTML = '<span style="color:var(--red)">' + e.message + '</span>';
+  function section(label, text) {
+    return `<div style="font-size:10px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#8B949E;margin-top:10px;margin-bottom:3px">${label}</div>`
+      + `<div style="color:#CDD9E5">${text}</div>`;
   }
 }
 
