@@ -251,6 +251,7 @@ textarea.notes-edit:focus{border-color:var(--text)}
 }
 @media(max-width:700px){.sidebar{display:none}.main{padding:20px 16px}}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lightweight-charts/4.1.3/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 <div class="layout">
@@ -663,24 +664,23 @@ textarea.notes-edit:focus{border-color:var(--text)}
         </div>
       </div>
 
-      <!-- RIGHT: Chart screenshot + price levels + stats -->
+      <!-- RIGHT: Auto chart + price levels + stats -->
       <div class="modal-right">
 
-        <!-- Chart screenshot upload -->
-        <div class="section-lbl" style="margin-bottom:8px">Chart Screenshot</div>
-        <div id="d-chart-zone" class="chart-img-zone"
-          ondragover="event.preventDefault();this.classList.add('drag-over')"
-          ondragleave="this.classList.remove('drag-over')"
-          ondrop="handleChartImgDrop(event)"
-          onclick="document.getElementById('d-chart-input').click()">
-          <input type="file" accept="image/*" id="d-chart-input" style="display:none" onchange="handleChartImg(event)">
-          <img id="d-chart-preview" class="chart-img-preview" src="" alt="" onclick="openLightbox(this.src);event.stopPropagation()">
-          <div id="d-chart-placeholder" class="chart-placeholder">
-            <div style="font-size:32px;margin-bottom:8px">📈</div>
-            <div style="font-weight:600;font-size:13px;margin-bottom:4px">Drop chart screenshot here</div>
-            <div style="font-size:12px;color:var(--light)">or click to upload · TradingView, TopstepX replay, anything</div>
+        <!-- Auto price chart -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div class="section-lbl">Price Chart</div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm tf-btn active" id="tf-1" onclick="setChartTf(1,this)">1m</button>
+            <button class="btn btn-ghost btn-sm tf-btn" id="tf-5" onclick="setChartTf(5,this)">5m</button>
+            <button class="btn btn-ghost btn-sm tf-btn" id="tf-15" onclick="setChartTf(15,this)">15m</button>
           </div>
-          <button id="d-chart-clear" class="chart-clear-btn" onclick="clearChartImg(event)" title="Remove">✕</button>
+        </div>
+        <div id="d-auto-chart" style="width:100%;height:320px;border-radius:var(--r-sm);overflow:hidden;background:#131722;position:relative">
+          <div id="d-chart-status" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#8B949E;font-size:13px;flex-direction:column;gap:8px">
+            <div style="font-size:24px">📈</div>
+            <div>Loading chart…</div>
+          </div>
         </div>
 
         <!-- Price levels -->
@@ -1024,89 +1024,95 @@ function parseAndImportBlotter() {
 }
 
 function parseTopstepXPaste(raw) {
-  // TopstepX format per trade (12 fields, but blank lines may appear between pages):
-  // ID, Symbol, Size, EntryTime, ExitTime, Duration, EntryPrice, ExitPrice, P&L, Commissions, Fees, Direction
+  // Supports two TopstepX copy formats:
+  // 1. Tab-separated: ID\t/MNQ\t5\ttimestamp\ttimestamp\tduration\tentry\texit\tpnl\tcomm\tfees\tdir
+  // 2. Multi-line: 12 lines per trade (ID, /MNQ, 5, date, date, duration, entry, exit, pnl, comm, fees, dir)
 
   const INSTRUMENTS = ['NQ','MNQ','ES','MES','RTY','MRTY','YM','MYM','CL','MCL','GC','MGC','SI','ZN','ZB'];
-  const instrRe = new RegExp('^\\/?('+INSTRUMENTS.join('|')+')$', 'i');
-  const isPrice   = s => /^[\$,\d]+\.?\d*$/.test(s.replace(/[$,\-]/g,'').trim()) && parseFloat(s.replace(/[$,]/g,'')) > 100;
-  const isPnl     = s => /^\$-?[\d,]+\.\d{2}$/.test(s.trim());
-  const isDir     = s => /^(long|short)$/i.test(s.trim());
-  const isId      = s => /^\d{7,}$/.test(s.trim());
-  const isDur     = s => /^\d{2}:\d{2}:\d{2}$/.test(s.trim());
-  const isDate    = s => /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b.*\d{4}/i.test(s);
-  const isSize    = s => /^\d{1,4}$/.test(s.trim()) && parseInt(s) >= 1 && parseInt(s) <= 500;
+  const instrRe = new RegExp('\\/?(' + INSTRUMENTS.join('|') + ')\\b', 'i');
 
-  // Strip all blank lines, then find trade boundaries by ID
-  const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const n = s => parseFloat((s||'').replace(/[$,\s]/g, ''));
+  const toDate = ts => {
+    // Unix timestamp (seconds) e.g. 1,779,977,550
+    const num = parseFloat((ts||'').replace(/,/g,''));
+    if (!isNaN(num) && num > 1000000000) {
+      return new Date(num * 1000).toISOString().slice(0,10);
+    }
+    // Human date e.g. "May 28 2026 @ 10:12:30 am"
+    const m = (ts||'').match(/([A-Za-z]+ \d{1,2} \d{4})/);
+    if (m) {
+      const d = new Date(m[1]);
+      if (!isNaN(d)) return d.toISOString().slice(0,10);
+    }
+    return new Date().toISOString().slice(0,10);
+  };
+  const toTime = ts => {
+    // From unix timestamp
+    const num = parseFloat((ts||'').replace(/,/g,''));
+    if (!isNaN(num) && num > 1000000000) {
+      return new Date(num * 1000).toLocaleTimeString('en-US', {hour:'2-digit',minute:'2-digit', hour12:true});
+    }
+    // From human date string
+    const m = (ts||'').match(/(\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm))/i);
+    return m ? m[1] : '';
+  };
+
+  const parseCols = cols => {
+    // cols: [id, symbol, size, entryTs, exitTs, duration, entry, exit, pnl, comm, fees, dir]
+    const symbol    = (cols[1]||'').replace(/^\//, '').toUpperCase();
+    const contracts = parseInt(cols[2]) || 1;
+    const entry     = n(cols[6]);
+    const exit      = n(cols[7]);
+    const pnl       = n(cols[8]);
+    const comm      = Math.abs(n(cols[9]));
+    const feesOnly  = Math.abs(n(cols[10]));
+    const fees      = (isNaN(comm) ? 0 : comm) + (isNaN(feesOnly) ? 0 : feesOnly);
+    const direction = /short/i.test(cols[11]||'') ? 'short' : 'long';
+    const date      = toDate(cols[3]);
+    const time      = toTime(cols[3]);
+    if (!symbol || !instrRe.test('/'+symbol) || isNaN(entry)) return null;
+    return { instrument:symbol, direction, contracts,
+             entry: isNaN(entry)?null:entry, exit: isNaN(exit)?null:exit,
+             pnl: isNaN(pnl)?null:pnl, fees, date, time, notes:'' };
+  };
+
   const trades = [];
+  const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-  let i = 0;
-  while (i < lines.length) {
-    // A trade starts with a numeric ID followed immediately by a symbol
-    if (isId(lines[i]) && lines[i+1] && instrRe.test(lines[i+1])) {
-      // Collect the next up-to 20 non-empty lines as this trade's fields
-      // Stop when we hit the next trade ID + symbol pair
-      const fields = [];
-      let j = i;
-      while (j < lines.length) {
-        // Next trade boundary — stop collecting (but don't consume)
-        if (j > i && isId(lines[j]) && lines[j+1] && instrRe.test(lines[j+1])) break;
-        fields.push(lines[j]);
-        j++;
-        if (fields.length >= 15) break; // safety cap
+  // Detect format: if first non-empty line has tabs → tab-separated
+  const firstDataLine = lines.find(l => /\d{7,}/.test(l));
+  const isTabFormat = firstDataLine && firstDataLine.includes('\t');
+
+  if (isTabFormat) {
+    // Tab-separated: one trade per line
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const cols = line.split('\t').map(s => s.trim());
+      if (cols.length < 10) continue;
+      if (!/^\d{7,}$/.test(cols[0])) continue; // must start with trade ID
+      const t = parseCols(cols);
+      if (t) trades.push(t);
+    }
+  } else {
+    // Multi-line: find each trade by ID + instrument on next line
+    const instrLineRe = new RegExp('^\\/?('+INSTRUMENTS.join('|')+')$', 'i');
+    let i = 0;
+    while (i < lines.length) {
+      if (/^\d{7,}$/.test(lines[i]) && lines[i+1] && instrLineRe.test(lines[i+1])) {
+        const fields = [];
+        let j = i;
+        while (j < lines.length) {
+          if (j > i && /^\d{7,}$/.test(lines[j]) && lines[j+1] && instrLineRe.test(lines[j+1])) break;
+          fields.push(lines[j]);
+          j++;
+          if (fields.length >= 15) break;
+        }
+        const t = parseCols(fields);
+        if (t) trades.push(t);
+        i = j;
+      } else {
+        i++;
       }
-
-      // fields[0] = ID, fields[1] = symbol, fields[2] = size
-      // fields[3] = entry date, fields[4] = exit date, fields[5] = duration
-      // fields[6] = entry price, fields[7] = exit price
-      // fields[8] = P&L, fields[9] = commissions, fields[10] = fees
-      // fields[11] = direction
-      const symbol    = fields[1].replace(/^\//, '').toUpperCase();
-      const contracts = parseInt(fields[2]) || 1;
-      const entryTime = fields[3] || '';
-      const entry     = parseFloat((fields[6]||'').replace(/[$,]/g, ''));
-      const exit      = parseFloat((fields[7]||'').replace(/[$,]/g, ''));
-      const pnl       = parseFloat((fields[8]||'').replace(/[$,]/g, ''));
-      const commissionsRaw = parseFloat((fields[9]||'').replace(/[$,]/g, ''));
-      const feesRaw        = parseFloat((fields[10]||'').replace(/[$,]/g, ''));
-      const commissions    = isNaN(commissionsRaw) ? 0 : Math.abs(commissionsRaw);
-      const feesOnly       = isNaN(feesRaw) ? 0 : Math.abs(feesRaw);
-      const fees           = commissions + feesOnly;
-      const dirRaw    = fields[11] || '';
-      const direction = /short/i.test(dirRaw) ? 'short' : 'long';
-
-      const timeMatch = entryTime.match(/(\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm))/i);
-      const time = timeMatch ? timeMatch[1] : '';
-
-      // Also extract the date for logging
-      const dateMatch = entryTime.match(/([A-Za-z]+ \d{1,2} \d{4})/);
-      const tradeDate = dateMatch
-        ? (() => {
-            const d = new Date(dateMatch[1]);
-            return isNaN(d) ? new Date().toISOString().slice(0,10)
-                            : d.toISOString().slice(0,10);
-          })()
-        : new Date().toISOString().slice(0,10);
-
-      if (symbol && !isNaN(entry)) {
-        trades.push({
-          instrument: symbol,
-          direction,
-          contracts,
-          entry: isNaN(entry) ? null : entry,
-          exit:  isNaN(exit)  ? null : exit,
-          pnl:   isNaN(pnl)   ? null : pnl,
-          fees:  fees,
-          time,
-          date: tradeDate,
-          notes: ''
-        });
-      }
-
-      i = j; // jump to next trade boundary
-    } else {
-      i++;
     }
   }
 
@@ -1585,22 +1591,169 @@ function clearChartImg(e) {
   zone.onclick = () => document.getElementById('d-chart-input').click();
 }
 function loadChartImg(t) {
-  const zone = document.getElementById('d-chart-zone');
-  const preview = document.getElementById('d-chart-preview');
-  const placeholder = document.getElementById('d-chart-placeholder');
-  // Reset
-  preview.src = ''; preview.classList.remove('visible');
-  placeholder.style.display = '';
-  zone.classList.remove('has-img');
-  zone.onclick = () => document.getElementById('d-chart-input').click();
-  // Load saved chart img if exists
-  if (t.hasChartImg) {
-    loadImg('chart_' + t.id).then(src => {
-      if (src) showChartImg(src);
-    });
+  // Clear any previous chart instance
+  const container = document.getElementById('d-auto-chart');
+  if (!container) return;
+  if (window._lwChart) { try { window._lwChart.remove(); } catch(e){} window._lwChart = null; }
+  setChartStatus('Loading chart\u2026');
+  window._currentTrade = t;
+  window._currentTf = window._currentTf || 1;
+  fetchAndRenderChart(t, window._currentTf);
+}
+
+function setChartTf(tf, btn) {
+  document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  window._currentTf = tf;
+  if (window._currentTrade) fetchAndRenderChart(window._currentTrade, tf);
+}
+
+function setChartStatus(msg) {
+  const el = document.getElementById('d-chart-status');
+  if (el) { el.style.display = 'flex'; el.querySelector('div:last-child').textContent = msg; }
+}
+function hideChartStatus() {
+  const el = document.getElementById('d-chart-status');
+  if (el) el.style.display = 'none';
+}
+
+async function fetchAndRenderChart(t, tf) {
+  if (!t.entry || !t.date) { setChartStatus('No entry price data'); return; }
+
+  // Map instrument to Yahoo Finance symbol
+  const yahooSym = {
+    'MNQ': 'MNQ=F', 'NQ': 'NQ=F',
+    'MES': 'MES=F', 'ES': 'ES=F',
+    'MYM': 'MYM=F', 'YM': 'YM=F',
+    'MRTY': 'MRTY=F', 'RTY': 'RTY=F',
+    'MCL': 'CL=F',  'CL': 'CL=F',
+    'MGC': 'GC=F',  'GC': 'GC=F',
+  }[t.instrument?.toUpperCase()];
+
+  if (!yahooSym) { setChartStatus('Chart not available for ' + t.instrument); return; }
+
+  // Build time window: 2 hours around the trade
+  // Parse trade time from t.time (e.g. "10:12 AM") and t.date (e.g. "2026-05-28")
+  let tradeTs = null;
+  try {
+    const timeStr = (t.time || '09:30 AM').replace(/\./g,'');
+    const dt = new Date(t.date + 'T00:00:00');
+    const match = timeStr.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/i);
+    if (match) {
+      let h = parseInt(match[1]), m = parseInt(match[2]);
+      const ap = (match[4]||'').toLowerCase();
+      if (ap === 'pm' && h < 12) h += 12;
+      if (ap === 'am' && h === 12) h = 0;
+      dt.setUTCHours(h + 5, m, 0, 0); // ET to UTC approx (+5 for EDT)
+      tradeTs = Math.floor(dt.getTime() / 1000);
+    }
+  } catch(e) {}
+
+  if (!tradeTs) { setChartStatus('Could not parse trade time'); return; }
+
+  const windowSecs = tf <= 1 ? 3600 : tf <= 5 ? 7200 : 14400;
+  const period1 = tradeTs - windowSecs;
+  const period2 = tradeTs + windowSecs;
+  const interval = tf === 1 ? '1m' : tf === 5 ? '5m' : '15m';
+
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${yahooSym}?period1=${period1}&period2=${period2}&interval=${interval}&includePrePost=true`;
+  const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+
+  setChartStatus('Fetching price data\u2026');
+
+  try {
+    const res = await fetch(proxy);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const json = await res.json();
+    const result = json?.chart?.result?.[0];
+    if (!result) throw new Error('No data returned');
+
+    const timestamps = result.timestamp;
+    const q = result.indicators.quote[0];
+    if (!timestamps || !q?.close?.length) throw new Error('Empty data');
+
+    const candles = timestamps.map((ts, i) => ({
+      time: ts,
+      open:  q.open[i]  ?? q.close[i],
+      high:  q.high[i]  ?? q.close[i],
+      low:   q.low[i]   ?? q.close[i],
+      close: q.close[i] ?? q.open[i],
+    })).filter(c => c.close != null && !isNaN(c.close));
+
+    if (!candles.length) throw new Error('No candles');
+
+    renderLWChart(candles, t);
+  } catch(err) {
+    console.warn('Chart fetch error:', err);
+    setChartStatus('Chart unavailable \u2014 ' + (err.message || 'fetch failed'));
   }
-  // Always render price levels
-  renderPriceLevels(t);
+}
+
+function renderLWChart(candles, t) {
+  const container = document.getElementById('d-auto-chart');
+  if (!container) return;
+
+  // Remove old chart
+  if (window._lwChart) { try { window._lwChart.remove(); } catch(e){} }
+
+  hideChartStatus();
+
+  const chart = LightweightCharts.createChart(container, {
+    width:  container.clientWidth,
+    height: 320,
+    layout: { background: { color: '#131722' }, textColor: '#D1D4DC' },
+    grid:   { vertLines: { color: '#1E2230' }, horzLines: { color: '#1E2230' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#2A2E39' },
+    timeScale: { borderColor: '#2A2E39', timeVisible: true, secondsVisible: false },
+  });
+  window._lwChart = chart;
+
+  const series = chart.addCandlestickSeries({
+    upColor: '#26a69a', downColor: '#ef5350',
+    borderVisible: false,
+    wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+  });
+  series.setData(candles);
+
+  // Entry marker
+  if (t.entry) {
+    const entryCandle = candles.reduce((best, c) =>
+      Math.abs(c.time - (Date.parse(t.date + ' ' + (t.time||'09:30'))/1000)) <
+      Math.abs(best.time - (Date.parse(t.date + ' ' + (t.time||'09:30'))/1000)) ? c : best
+    , candles[0]);
+
+    series.setMarkers([
+      {
+        time: entryCandle.time,
+        position: t.direction === 'long' ? 'belowBar' : 'aboveBar',
+        color: t.direction === 'long' ? '#26a69a' : '#ef5350',
+        shape: t.direction === 'long' ? 'arrowUp' : 'arrowDown',
+        text: 'E ' + t.entry,
+        size: 1,
+      },
+      ...(t.exit ? [{
+        time: candles[Math.min(candles.indexOf(entryCandle) + 3, candles.length - 1)].time,
+        position: t.direction === 'long' ? 'aboveBar' : 'belowBar',
+        color: t.pnl >= 0 ? '#26a69a' : '#ef5350',
+        shape: t.direction === 'long' ? 'arrowDown' : 'arrowUp',
+        text: 'X ' + t.exit,
+        size: 1,
+      }] : []),
+    ]);
+
+    // Price lines for entry/exit
+    series.createPriceLine({ price: t.entry, color: '#F0B429', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'Entry' });
+    if (t.exit) series.createPriceLine({ price: t.exit, color: t.pnl >= 0 ? '#26a69a' : '#ef5350', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'Exit' });
+  }
+
+  chart.timeScale().fitContent();
+
+  // Resize observer
+  const ro = new ResizeObserver(() => {
+    chart.applyOptions({ width: container.clientWidth });
+  });
+  ro.observe(container);
 }
 function renderPriceLevels(t) {
   const el = document.getElementById('d-price-levels');
