@@ -1068,8 +1068,11 @@ function parseTopstepXPaste(raw) {
       const entry     = parseFloat((fields[6]||'').replace(/[$,]/g, ''));
       const exit      = parseFloat((fields[7]||'').replace(/[$,]/g, ''));
       const pnl       = parseFloat((fields[8]||'').replace(/[$,]/g, ''));
-      const feesRaw   = parseFloat((fields[10]||'').replace(/[$,]/g, ''));
-      const fees      = isNaN(feesRaw) ? null : Math.abs(feesRaw);
+      const commissionsRaw = parseFloat((fields[9]||'').replace(/[$,]/g, ''));
+      const feesRaw        = parseFloat((fields[10]||'').replace(/[$,]/g, ''));
+      const commissions    = isNaN(commissionsRaw) ? 0 : Math.abs(commissionsRaw);
+      const feesOnly       = isNaN(feesRaw) ? 0 : Math.abs(feesRaw);
+      const fees           = commissions + feesOnly;
       const dirRaw    = fields[11] || '';
       const direction = /short/i.test(dirRaw) ? 'short' : 'long';
 
