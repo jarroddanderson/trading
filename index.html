@@ -285,7 +285,6 @@ textarea.notes-edit:focus{border-color:var(--text)}
         <input type="date" id="dash-date" style="padding:7px 10px;border:1px solid var(--border2);border-radius:var(--r-sm);font-family:'DM Sans',sans-serif;font-size:13px;color:var(--text);background:var(--surface);cursor:pointer" onchange="onDashDateChange()">
         <button class="btn btn-ghost btn-sm" id="dash-all-btn" onclick="toggleDashAll()">All Time</button>
         <button class="btn btn-secondary" onclick="openAddTrade()">+ Single Trade</button>
-        <button class="btn btn-primary" onclick="triggerBlotter()">📷 Import Day Blotter</button>
       </div>
     </div>
 
@@ -990,9 +989,9 @@ function saveAccount() {
 // ══════════════════════════════════════════════════════
 // BLOTTER IMPORT
 // ══════════════════════════════════════════════════════
-function triggerBlotter() { document.getElementById('blotter-file').click(); }
-function dragOn(e) { e.preventDefault(); document.getElementById('blotter-drop').classList.add('drag'); }
-function dragOff() { document.getElementById('blotter-drop').classList.remove('drag'); }
+function triggerBlotter() {}
+function dragOn(e) { e.preventDefault(); }
+function dragOff() {}
 function dropBlotter(e) { e.preventDefault(); }
 function handleBlotter(e) {}
 
