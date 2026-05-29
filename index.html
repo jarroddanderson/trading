@@ -1015,8 +1015,7 @@ function parseAndImportBlotter() {
   if (!raw.trim()) { toast('⚠ Nothing pasted yet'); return; }
 
   // Debug: show first 3 lines and character codes
-  const debugLines = raw.split('
-').slice(0, 3);
+  const debugLines = raw.split('\n').slice(0, 3);
   console.log('=== PASTE DEBUG ===');
   console.log('Total chars:', raw.length);
   debugLines.forEach((l, i) => {
@@ -1024,13 +1023,12 @@ function parseAndImportBlotter() {
     console.log('Line', i, JSON.stringify(l.slice(0,60)), '| codes:', codes.join(','));
   });
 
-  const trades = parseTopstepXPaste(raw);
+    const trades = parseTopstepXPaste(raw);
   console.log('Parsed trades:', trades.length);
 
   if (!trades.length) {
     // Show helpful debug toast
-    const firstLine = raw.trim().split('
-')[0];
+    const firstLine = raw.trim().split('\n')[0];
     const cols = firstLine.split(/	| {2,}/).filter(s=>s.trim());
     toast('⚠ No trades found — check console (F12) for details. First line had ' + cols.length + ' cols');
     return;
