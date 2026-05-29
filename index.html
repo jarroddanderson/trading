@@ -1079,17 +1079,19 @@ function parseTopstepXPaste(raw) {
   const trades = [];
   const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-  // Detect format: if first non-empty line has tabs → tab-separated
+  // Detect format: tab-separated (one trade per line) vs multi-line (12 lines per trade)
+  // Tab format: line contains a trade ID followed by a tab or multiple spaces then /MNQ etc
   const firstDataLine = lines.find(l => /\d{7,}/.test(l));
-  const isTabFormat = firstDataLine && firstDataLine.includes('\t');
+  // Split on tab OR 2+ spaces OR pipe
+  const splitCols = line => line.split(/\t| {2,}|\|/).map(s => s.trim()).filter(s => s.length > 0);
+  const isTabFormat = firstDataLine && splitCols(firstDataLine).length >= 10;
 
   if (isTabFormat) {
-    // Tab-separated: one trade per line
+    // One trade per line
     for (const line of lines) {
-      if (!line.trim()) continue;
-      const cols = line.split('\t').map(s => s.trim());
+      const cols = splitCols(line);
       if (cols.length < 10) continue;
-      if (!/^\d{7,}$/.test(cols[0])) continue; // must start with trade ID
+      if (!/^\d{7,}$/.test(cols[0])) continue;
       const t = parseCols(cols);
       if (t) trades.push(t);
     }
