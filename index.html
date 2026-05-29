@@ -251,7 +251,6 @@ textarea.notes-edit:focus{border-color:var(--text)}
 }
 @media(max-width:700px){.sidebar{display:none}.main{padding:20px 16px}}
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
 </head>
 <body>
 <div class="layout">
@@ -282,18 +281,24 @@ textarea.notes-edit:focus{border-color:var(--text)}
   <div class="page active" id="page-dashboard">
     <div class="page-head">
       <div><div class="page-title">Dashboard</div><div class="page-sub" id="today-date"></div></div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="date" id="dash-date" style="padding:7px 10px;border:1px solid var(--border2);border-radius:var(--r-sm);font-family:'DM Sans',sans-serif;font-size:13px;color:var(--text);background:var(--surface);cursor:pointer" onchange="onDashDateChange()">
+        <button class="btn btn-ghost btn-sm" id="dash-all-btn" onclick="toggleDashAll()">All Time</button>
         <button class="btn btn-secondary" onclick="openAddTrade()">+ Single Trade</button>
         <button class="btn btn-primary" onclick="triggerBlotter()">📷 Import Day Blotter</button>
       </div>
     </div>
 
-    <div class="upload-blotter" id="blotter-drop" ondragover="dragOn(event)" ondragleave="dragOff(event)" ondrop="dropBlotter(event)">
-      <input type="file" accept="image/*" id="blotter-file" onchange="handleBlotter(event)">
-      <div class="ai-pill">📷 Blotter Extractor</div>
-      <div class="upload-icon-big">📊</div>
-      <div class="upload-title">Upload today's blotter screenshot</div>
-      <div class="upload-desc">Drop your TopstepX trade history table screenshot here.<br>OCR reads every row and extracts all trades automatically.</div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 24px;margin-bottom:24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:2px">📋 Import from TopstepX</div>
+          <div style="font-size:12px;color:var(--muted)">On topstepx.com/stats, select all trade rows → Copy → Paste below</div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="parseAndImportBlotter()">Import Trades →</button>
+      </div>
+      <textarea id="blotter-paste-input" style="width:100%;height:110px;padding:9px 12px;border:1px solid var(--border2);border-radius:var(--r-sm);font-family:'DM Mono',monospace;font-size:11.5px;resize:vertical;color:var(--text);background:var(--surface2);outline:none;line-height:1.5" placeholder="Paste copied trade rows here…" oninput="previewBlotterPaste()"></textarea>
+      <div id="blotter-paste-preview" style="font-size:11.5px;color:var(--muted);margin-top:6px"></div>
     </div>
 
     <div class="processing-bar" id="proc-bar"><div class="processing-fill" id="proc-fill"></div></div>
@@ -988,123 +993,117 @@ function saveAccount() {
 function triggerBlotter() { document.getElementById('blotter-file').click(); }
 function dragOn(e) { e.preventDefault(); document.getElementById('blotter-drop').classList.add('drag'); }
 function dragOff() { document.getElementById('blotter-drop').classList.remove('drag'); }
-function dropBlotter(e) {
-  e.preventDefault(); document.getElementById('blotter-drop').classList.remove('drag');
-  const f = e.dataTransfer.files[0];
-  if (f?.type.startsWith('image/')) processBlotter(f);
+function dropBlotter(e) { e.preventDefault(); }
+function handleBlotter(e) {}
+
+function previewBlotterPaste() {
+  const raw = document.getElementById('blotter-paste-input')?.value?.trim() || '';
+  const preview = document.getElementById('blotter-paste-preview');
+  if (!raw) { preview.textContent = ''; return; }
+  const count = countParsedTrades(raw);
+  preview.textContent = count > 0
+    ? `✓ ${count} trade${count>1?'s':''} detected — click Import Trades`
+    : 'No trades detected yet — make sure you copied from the TopstepX trade table';
+  preview.style.color = count > 0 ? 'var(--green-mid)' : 'var(--muted)';
 }
-function handleBlotter(e) { const f = e.target.files[0]; if(f) processBlotter(f); e.target.value=''; }
 
-function processBlotter(file) {
-  const reader = new FileReader();
-  reader.onload = async e => { blotterImgData = e.target.result; showProc('Reading screenshot…', 20); await extractBlotterAI(blotterImgData); };
-  reader.readAsDataURL(file);
+function countParsedTrades(raw) {
+  return parseTopstepXPaste(raw).length;
 }
-function showProc(msg, pct) {
-  document.getElementById('proc-bar').style.display='block';
-  document.getElementById('proc-msg').style.display='block';
-  document.getElementById('proc-fill').style.width=pct+'%';
-  document.getElementById('proc-msg').innerHTML=`<span class="spin"></span> ${msg}`;
-}
-function hideProc() { document.getElementById('proc-bar').style.display='none'; document.getElementById('proc-msg').style.display='none'; }
 
-async function extractBlotterAI(imgDataUrl) {
-  showProc('Loading OCR engine…', 15);
-  try {
-    // Tesseract.js v5 API
-    const worker = await Tesseract.createWorker('eng', 1, {
-      logger: m => {
-        if (m.status === 'recognizing text') {
-          showProc('Reading screenshot… ' + Math.round(m.progress * 100) + '%', 20 + Math.round(m.progress * 60));
-        }
-      }
-    });
-
-    showProc('Recognising text…', 25);
-    const { data: { text } } = await worker.recognize(imgDataUrl);
-    await worker.terminate();
-
-    showProc('Parsing trades…', 85);
-
-    const trades = parseTopstepXText(text);
-
-    hideProc();
-
-    if (!trades.length) {
-      toast('⚠ No trades found — make sure the screenshot shows the trade table clearly');
-      return;
-    }
-    openImportReview(trades);
-  } catch(err) {
-    hideProc();
-    console.error('OCR error:', err);
-    toast('⚠ OCR failed: ' + (err.message || 'unknown error'));
+function parseAndImportBlotter() {
+  const raw = document.getElementById('blotter-paste-input')?.value?.trim() || '';
+  if (!raw) { toast('⚠ Nothing pasted yet'); return; }
+  const trades = parseTopstepXPaste(raw);
+  if (!trades.length) {
+    toast('⚠ No trades found — copy the rows directly from the TopstepX trade table');
+    return;
   }
+  document.getElementById('blotter-paste-input').value = '';
+  document.getElementById('blotter-paste-preview').textContent = '';
+  openImportReview(trades);
 }
 
-function parseTopstepXText(rawText) {
-  const trades = [];
+function parseTopstepXPaste(raw) {
+  // TopstepX format per trade (12 fields, but blank lines may appear between pages):
+  // ID, Symbol, Size, EntryTime, ExitTime, Duration, EntryPrice, ExitPrice, P&L, Commissions, Fees, Direction
+
   const INSTRUMENTS = ['NQ','MNQ','ES','MES','RTY','MRTY','YM','MYM','CL','MCL','GC','MGC','SI','ZN','ZB'];
-  const instrRe = new RegExp('\\/?(' + INSTRUMENTS.join('|') + ')\\b', 'i');
+  const instrRe = new RegExp('^\\/?('+INSTRUMENTS.join('|')+')$', 'i');
+  const isPrice   = s => /^[\$,\d]+\.?\d*$/.test(s.replace(/[$,\-]/g,'').trim()) && parseFloat(s.replace(/[$,]/g,'')) > 100;
+  const isPnl     = s => /^\$-?[\d,]+\.\d{2}$/.test(s.trim());
+  const isDir     = s => /^(long|short)$/i.test(s.trim());
+  const isId      = s => /^\d{7,}$/.test(s.trim());
+  const isDur     = s => /^\d{2}:\d{2}:\d{2}$/.test(s.trim());
+  const isDate    = s => /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b.*\d{4}/i.test(s);
+  const isSize    = s => /^\d{1,4}$/.test(s.trim()) && parseInt(s) >= 1 && parseInt(s) <= 500;
 
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  // Strip all blank lines, then find trade boundaries by ID
+  const lines = raw.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const trades = [];
 
-  for (const line of lines) {
-    // Must contain an instrument name
-    const instrMatch = line.match(instrRe);
-    if (!instrMatch) continue;
-
-    // Skip header rows
-    if (/\b(symbol|instrument|entry price|direction|side|journal)\b/i.test(line) &&
-        !instrMatch) continue;
-
-    const instrument = instrMatch[1].toUpperCase();
-
-    // Direction
-    const dirMatch = line.match(/\b(long|short|buy|sell)\b/i);
-    const direction = dirMatch ? (/long|buy/i.test(dirMatch[1]) ? 'long' : 'short') : null;
-
-    // Time - prefer a recognisable clock time
-    const timeMatch = line.match(/\b(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]M)?)\b/i);
-    const time = timeMatch ? timeMatch[1].trim() : '';
-
-    // Strip noisy parts before number extraction:
-    // - unix-style timestamps (~1.78 billion)
-    // - date strings like "May 29 2026"
-    // - duration strings like 00:03:45
-    let stripped = line
-      .replace(/\bMay\b[^0-9]*?\d{4}[^0-9]*?@[^0-9]*?\d{1,2}:\d{2}[^a-z]*/gi, ' ')
-      .replace(/\b1[,\s]?[78]\d{2}[,\s]?\d{3}[,\s]?\d{3}\b/g, ' ')
-      .replace(/\b00:\d{2}:\d{2}\b/g, ' ')
-      .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AP]M)?\b/gi, ' ');
-
-    // Extract all numbers (including negative)
-    const nums = [...stripped.matchAll(/-?\d{1,6}(?:[.,]\d{1,2})?/g)]
-      .map(m => parseFloat(m[0].replace(',', '')))
-      .filter(n => !isNaN(n));
-
-    // Contracts: small positive integer 1-100
-    const contracts = nums.find(n => Number.isInteger(n) && n >= 1 && n <= 100) || 1;
-
-    // Prices: futures price range 1000-100000
-    const prices = nums.filter(n => n > 1000 && n < 100000);
-    const entry = prices[0] || null;
-    const exit  = prices[1] || null;
-
-    // P&L: not a price, not contracts, abs < 5000, can be negative
-    const usedSet = new Set([contracts, ...prices]);
-    let pnl = null;
-    for (const n of nums) {
-      if (!usedSet.has(n) && Math.abs(n) < 5000 && n !== 0) {
-        pnl = n;
-        break;
+  let i = 0;
+  while (i < lines.length) {
+    // A trade starts with a numeric ID followed immediately by a symbol
+    if (isId(lines[i]) && lines[i+1] && instrRe.test(lines[i+1])) {
+      // Collect the next up-to 20 non-empty lines as this trade's fields
+      // Stop when we hit the next trade ID + symbol pair
+      const fields = [];
+      let j = i;
+      while (j < lines.length) {
+        // Next trade boundary — stop collecting (but don't consume)
+        if (j > i && isId(lines[j]) && lines[j+1] && instrRe.test(lines[j+1])) break;
+        fields.push(lines[j]);
+        j++;
+        if (fields.length >= 15) break; // safety cap
       }
+
+      // fields[0] = ID, fields[1] = symbol, fields[2] = size
+      // fields[3] = entry date, fields[4] = exit date, fields[5] = duration
+      // fields[6] = entry price, fields[7] = exit price
+      // fields[8] = P&L, fields[9] = commissions, fields[10] = fees
+      // fields[11] = direction
+      const symbol    = fields[1].replace(/^\//, '').toUpperCase();
+      const contracts = parseInt(fields[2]) || 1;
+      const entryTime = fields[3] || '';
+      const entry     = parseFloat((fields[6]||'').replace(/[$,]/g, ''));
+      const exit      = parseFloat((fields[7]||'').replace(/[$,]/g, ''));
+      const pnl       = parseFloat((fields[8]||'').replace(/[$,]/g, ''));
+      const dirRaw    = fields[11] || '';
+      const direction = /short/i.test(dirRaw) ? 'short' : 'long';
+
+      const timeMatch = entryTime.match(/(\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm))/i);
+      const time = timeMatch ? timeMatch[1] : '';
+
+      // Also extract the date for logging
+      const dateMatch = entryTime.match(/([A-Za-z]+ \d{1,2} \d{4})/);
+      const tradeDate = dateMatch
+        ? (() => {
+            const d = new Date(dateMatch[1]);
+            return isNaN(d) ? new Date().toISOString().slice(0,10)
+                            : d.toISOString().slice(0,10);
+          })()
+        : new Date().toISOString().slice(0,10);
+
+      if (symbol && !isNaN(entry)) {
+        trades.push({
+          instrument: symbol,
+          direction,
+          contracts,
+          entry: isNaN(entry) ? null : entry,
+          exit:  isNaN(exit)  ? null : exit,
+          pnl:   isNaN(pnl)   ? null : pnl,
+          fees:  fees,
+          time,
+          date: tradeDate,
+          notes: ''
+        });
+      }
+
+      i = j; // jump to next trade boundary
+    } else {
+      i++;
     }
-
-    // Need at least entry price to be a valid trade row
-    if (!entry) continue;
-
-    trades.push({ instrument, direction, contracts, entry, exit, pnl, time, notes: '' });
   }
 
   return trades;
@@ -1126,6 +1125,8 @@ function renderImportRows(trades) {
       <input type="number" value="${t.entry??''}" step="0.01" placeholder="Entry" id="ir-entry-${i}">
       <input type="number" value="${t.exit??''}" step="0.01" placeholder="Exit" id="ir-exit-${i}">
       <input type="number" value="${t.pnl??''}" step="0.01" placeholder="P&L" id="ir-pnl-${i}">
+      <input type="hidden" value="${t.date||''}" id="ir-date-${i}">
+      <input type="hidden" value="${t.fees!=null?t.fees:''}" id="ir-fees-${i}">
       <input type="time" value="${t.time||''}" id="ir-time-${i}">
       <input type="text" value="${t.notes||''}" placeholder="Notes…" id="ir-notes-${i}">
       <button class="row-del" onclick="document.getElementById('ir-${i}').remove()">×</button>
@@ -1147,13 +1148,14 @@ async function confirmImport() {
     const contracts = parseInt(document.getElementById(`ir-qty-${i}`)?.value)||1;
     newTrades.push({
       id: 'tr_'+Date.now()+'_'+i,
-      date: today, time: document.getElementById(`ir-time-${i}`)?.value||'',
+      date: document.getElementById(`ir-date-${i}`)?.value || today, time: document.getElementById(`ir-time-${i}`)?.value||'',
       accountId: accId, instrument: inst,
       direction: document.getElementById(`ir-dir-${i}`)?.value||'long',
       contracts,
       entry: parseFloat(document.getElementById(`ir-entry-${i}`)?.value)||null,
       exit: parseFloat(document.getElementById(`ir-exit-${i}`)?.value)||null,
-      pnl, fees: getFee(inst, contracts),
+      pnl,
+      fees: (() => { const f = parseFloat(document.getElementById(`ir-fees-${i}`)?.value); return isNaN(f) ? getFee(inst, contracts) : f; })(),
       result: pnl >= 0 ? 'win' : 'loss',
       notes: document.getElementById(`ir-notes-${i}`)?.value||'',
       hasBlotter: !!blotterImgData, hasTradeImg: false,
@@ -1242,11 +1244,34 @@ async function saveSingleTrade() {
 // ══════════════════════════════════════════════════════
 // DASHBOARD RENDER
 // ══════════════════════════════════════════════════════
+let dashShowAll = false;
+
+function onDashDateChange() {
+  dashShowAll = false;
+  document.getElementById('dash-all-btn').style.fontWeight = '';
+  renderDash();
+}
+function toggleDashAll() {
+  dashShowAll = !dashShowAll;
+  document.getElementById('dash-all-btn').style.fontWeight = dashShowAll ? '700' : '';
+  if (dashShowAll) document.getElementById('dash-date').value = '';
+  renderDash();
+}
+
 function renderDash() {
   const today = new Date().toISOString().split('T')[0];
+  // Set date picker to today on first load
+  const datePicker = document.getElementById('dash-date');
+  if (datePicker && !datePicker.value && !dashShowAll) datePicker.value = today;
+
+  const selectedDate = dashShowAll ? null : (datePicker?.value || today);
   const accFilter = document.getElementById('chart-acc')?.value||'all';
-  const allToday = S.trades.filter(t => t.date===today);
+  const allToday = selectedDate
+    ? S.trades.filter(t => t.date === selectedDate)
+    : S.trades.slice();
   const filtered = allToday.filter(t => accFilter==='all'||t.accountId===accFilter);
+
+  const label = dashShowAll ? 'All time' : (selectedDate === today ? 'Today' : selectedDate);
 
   const gross = allToday.reduce((s,t)=>s+t.pnl,0);
   const totalFees = allToday.reduce((s,t)=>s+(t.fees||0),0);
@@ -1257,7 +1282,7 @@ function renderDash() {
 
   const pEl=document.getElementById('st-pnl');
   pEl.textContent=fmt(gross); pEl.className='stat-val '+(gross>0?'pos':gross<0?'neg':'');
-  document.getElementById('st-pnl-sub').textContent=allToday.length?`${allToday.length} trades`:'No trades today';
+  document.getElementById('st-pnl-sub').textContent=allToday.length?`${allToday.length} trades`:`No trades — ${label}`;
 
   const nEl=document.getElementById('st-net');
   nEl.textContent=fmt(net); nEl.className='stat-val '+(net>0?'pos':net<0?'neg':'');
@@ -1271,7 +1296,7 @@ function renderDash() {
   // Bar chart
   const chartEl=document.getElementById('today-chart');
   if (!filtered.length) {
-    chartEl.innerHTML='<div class="empty" style="width:100%;padding:16px 0"><div class="empty-icon">📊</div><div class="empty-desc">No trades today</div></div>';
+    chartEl.innerHTML=`<div class="empty" style="width:100%;padding:16px 0"><div class="empty-icon">📊</div><div class="empty-desc">No trades — ${label}</div></div>`;
   } else {
     const maxAbs=Math.max(...filtered.map(t=>Math.abs(t.pnl)),1);
     chartEl.innerHTML=filtered.map(t=>{
@@ -1313,7 +1338,7 @@ function renderDash() {
   document.getElementById('today-sub').textContent=allToday.length?`${allToday.length} trades · ${fmt(gross)} gross · ${fmt(net)} net`:'No trades logged';
   const tbody=document.getElementById('today-tbody');
   if (!allToday.length) {
-    tbody.innerHTML='<tr><td colspan="11"><div class="empty"><div class="empty-icon">↕</div><div class="empty-title">No trades logged</div><div class="empty-desc">Upload a blotter or add manually</div></div></td></tr>';
+    tbody.innerHTML=`<tr><td colspan="11"><div class="empty"><div class="empty-icon">↕</div><div class="empty-title">No trades — ${label}</div><div class="empty-desc">Upload a blotter or add manually</div></div></td></tr>`;
   } else {
     tbody.innerHTML=allToday.map((t,i)=>trRow(t,i+1,true)).join('');
   }
