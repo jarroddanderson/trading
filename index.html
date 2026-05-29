@@ -1109,8 +1109,12 @@ function parseTopstepXPaste(raw) {
 }
 
 function openImportReview(trades) {
-  document.getElementById('import-preview-img').src = blotterImgData;
-  document.getElementById('import-sub').textContent = `AI found ${trades.length} trade${trades.length!==1?'s':''}. Review before importing.`;
+  const previewImg = document.getElementById('import-preview-img');
+  if (previewImg) {
+    previewImg.src = blotterImgData || '';
+    previewImg.style.display = blotterImgData ? 'block' : 'none';
+  }
+  document.getElementById('import-sub').textContent = `Found ${trades.length} trade${trades.length!==1?'s':''}. Review before importing.`;
   document.getElementById('import-count-msg').textContent = `${trades.length} trade${trades.length!==1?'s':''} ready`;
   renderImportRows(trades);
   document.getElementById('import-overlay').classList.add('open');
